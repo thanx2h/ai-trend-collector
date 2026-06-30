@@ -1,4 +1,4 @@
-﻿from aitrendigest.pipeline import build_daily_digest, build_digest_sections
+from aitrendigest.pipeline import build_daily_digest, build_digest_sections, publish_new_items
 
 
 class DummyResponse:
@@ -16,6 +16,15 @@ class DummyClient:
         return DummyResponse(200)
 
 
+class DummyPublisher:
+    def __init__(self):
+        self.messages = []
+
+    def send_message(self, message: str) -> None:
+        self.messages.append(message)
+
+
+from aitrendigest.config import Settings
 from aitrendigest.telegram import TelegramPublisher
 
 
@@ -83,3 +92,22 @@ def test_build_daily_digest_returns_ranked_entries():
     entries = build_daily_digest(items)
 
     assert entries[0].title == "Agent evaluation harness"
+
+
+def test_publish_new_items_renders_live_digest_without_db(monkeypatch):
+    settings = Settings(telegram_bot_token="token", telegram_chat_id="12345")
+    publisher = DummyPublisher()
+    items = [
+        {
+            "title": "google-labs-code / design.md",
+            "url": "https://example.com/a",
+            "summary": "AI coding agent design guide",
+            "raw_popularity_signal": {"rank": 1},
+            "source_type": "github_trending",
+        }
+    ]
+
+    message = publish_new_items(settings, publisher=publisher, dry_run=False, items=items)
+
+    assert "AI 엔지니어링 핵심 5" in message
+    assert len(publisher.messages) == 1

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
@@ -14,8 +14,6 @@ from aitrendigest.collectors.hf_models import parse_hf_trending_models_html
 from aitrendigest.collectors.hf_papers import parse_hf_trending_papers_html
 from aitrendigest.collectors.rss import parse_rss_feed
 from aitrendigest.digest import DigestEntry, DigestSection, render_digest_message
-from aitrendigest.models import TrendItemRecord
-from aitrendigest.repository import ItemRepository
 from aitrendigest.scoring import assess_ai_engineering_fit
 from aitrendigest.tagging import infer_tags
 from aitrendigest.telegram import TelegramPublisher
@@ -82,23 +80,6 @@ def fetch_enabled_sources(enabled_sources: list[str]) -> list[TrendItemInput]:
     return collected
 
 
-def collect_enabled_sources(settings, repository: ItemRepository) -> int:
-    collected_items = fetch_enabled_sources(settings.enabled_sources)
-    for item in collected_items:
-        repository.upsert_item(item)
-    return len(collected_items)
-
-
-def _record_to_dict(record: TrendItemRecord) -> dict[str, Any]:
-    return {
-        "title": record.title,
-        "url": record.url,
-        "summary": record.summary,
-        "raw_popularity_signal": record.raw_popularity_signal or {},
-        "source_type": record.source_type,
-    }
-
-
 @dataclass(slots=True)
 class _ScoredItem:
     title: str
@@ -108,32 +89,45 @@ class _ScoredItem:
     section: str
 
 
-def _score_item(item: dict[str, Any]) -> _ScoredItem:
-    text = f"{item['title']} {item.get('summary') or ''}"
+def _item_to_dict(item: TrendItemInput | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(item, dict):
+        return item
+    return {
+        "title": item.title,
+        "url": item.url,
+        "summary": item.summary,
+        "raw_popularity_signal": item.raw_popularity_signal or {},
+        "source_type": item.source_type,
+    }
+
+
+def _score_item(item: TrendItemInput | dict[str, Any]) -> _ScoredItem:
+    item_dict = _item_to_dict(item)
+    text = f"{item_dict['title']} {item_dict.get('summary') or ''}"
     tags = infer_tags(text)
     assessment = assess_ai_engineering_fit(
-        title=item["title"],
-        summary=item.get("summary"),
-        url=item["url"],
+        title=item_dict["title"],
+        summary=item_dict.get("summary"),
+        url=item_dict["url"],
         tags=tags,
-        source_type=item["source_type"],
-        signals=item.get("raw_popularity_signal", {}),
+        source_type=item_dict["source_type"],
+        signals=item_dict.get("raw_popularity_signal", {}),
     )
     return _ScoredItem(
-        title=item["title"],
+        title=item_dict["title"],
         tags=tags,
         ai_engineering_fit=assessment.score,
-        url=item["url"],
+        url=item_dict["url"],
         section=assessment.section,
     )
 
 
-def _rank_scored_items(items: list[dict[str, Any]]) -> list[_ScoredItem]:
+def _rank_scored_items(items: list[TrendItemInput | dict[str, Any]]) -> list[_ScoredItem]:
     scored = [_score_item(item) for item in items]
     return sorted(scored, key=lambda row: (row.ai_engineering_fit, row.title), reverse=True)
 
 
-def build_digest_sections(items: list[dict[str, Any]]) -> list[DigestSection]:
+def build_digest_sections(items: list[TrendItemInput | dict[str, Any]]) -> list[DigestSection]:
     scored_items = _rank_scored_items(items)
     core_items = [item for item in scored_items if item.section == "core"][:5]
     adjacent_items = [item for item in scored_items if item.section == "adjacent"][:2]
@@ -172,18 +166,27 @@ def build_digest_sections(items: list[dict[str, Any]]) -> list[DigestSection]:
     return sections
 
 
-def build_daily_digest(items: list[dict]) -> list[DigestEntry]:
+def build_daily_digest(items: list[dict[str, Any]]) -> list[DigestEntry]:
     sections = build_digest_sections(items)
     return [entry for section in sections for entry in section.entries]
 
 
-def publish_new_items(settings, repository: ItemRepository, publisher: TelegramPublisher | None = None, dry_run: bool = False) -> str:
-    records = repository.list_items(send_status="new")
-    if not records:
-        return "No new items to publish."
+def build_digest_message(items: list[TrendItemInput | dict[str, Any]], date_label: str | None = None) -> str:
+    sections = build_digest_sections(items)
+    label = date_label or date.today().isoformat()
+    return render_digest_message(label, sections, ["Try the highest-scoring item today."])
 
-    sections = build_digest_sections([_record_to_dict(record) for record in records])
-    message = render_digest_message(date.today().isoformat(), sections, ["Try the highest-scoring item today."])
+
+def collect_enabled_sources(settings) -> list[TrendItemInput]:
+    return fetch_enabled_sources(settings.enabled_sources)
+
+
+def publish_new_items(settings, publisher: TelegramPublisher | None = None, dry_run: bool = False, items: list[TrendItemInput | dict[str, Any]] | None = None) -> str:
+    source_items = items if items is not None else collect_enabled_sources(settings)
+    if not source_items:
+        return "No items to publish."
+
+    message = build_digest_message(source_items)
 
     if dry_run:
         return message
@@ -192,6 +195,4 @@ def publish_new_items(settings, repository: ItemRepository, publisher: TelegramP
         publisher = TelegramPublisher(None, settings.telegram_bot_token, settings.telegram_chat_id)
 
     publisher.send_message(message)
-    repository.mark_items_sent(record.id for record in records)
     return message
-
