@@ -1,4 +1,4 @@
-from aitrendigest.collectors.github_trending import parse_github_trending_html
+﻿from aitrendigest.collectors.github_trending import parse_github_trending_html
 from aitrendigest.collectors.arxiv import parse_arxiv_feed
 
 
@@ -30,4 +30,19 @@ def test_parse_arxiv_feed_returns_entry_title_and_url():
     items = parse_arxiv_feed(feed)
 
     assert items[0].title == "Agent Evaluation Systems"
-    assert items[0].url == "http://arxiv.org/abs/1234.5678v1"
+    assert items[0].url == "https://arxiv.org/abs/1234.5678v1"
+
+
+def test_parse_arxiv_feed_normalizes_oai_identifier_to_abs_link():
+    feed = """
+    <feed xmlns="http://www.w3.org/2005/Atom">
+      <entry>
+        <id>oai:arXiv.org:2606.28758v1</id>
+        <title>X-Mind</title>
+      </entry>
+    </feed>
+    """
+
+    items = parse_arxiv_feed(feed)
+
+    assert items[0].url == "https://arxiv.org/abs/2606.28758v1"

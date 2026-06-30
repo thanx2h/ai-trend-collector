@@ -38,7 +38,61 @@ def test_telegram_publisher_posts_message():
     assert client.requests[0]["url"].endswith("/sendMessage")
 
 
-def test_build_digest_sections_splits_core_and_adjacent_items():
+def test_build_digest_sections_preserves_adjacent_section_when_core_is_full():
+    items = [
+        {
+            "title": "core repo design.md",
+            "url": "https://example.com/core-1",
+            "summary": "AI coding agent design guide",
+            "raw_popularity_signal": {"rank": 1},
+            "source_type": "github_trending",
+        },
+        {
+            "title": "agent eval harness repo",
+            "url": "https://example.com/core-2",
+            "summary": "Tool calling eval harness",
+            "raw_popularity_signal": {"rank": 2},
+            "source_type": "github_trending",
+        },
+        {
+            "title": "rag benchmark toolkit",
+            "url": "https://example.com/core-3",
+            "summary": "RAG benchmark and retrieval workflows",
+            "raw_popularity_signal": {"rank": 3},
+            "source_type": "github_trending",
+        },
+        {
+            "title": "inference serving stack",
+            "url": "https://example.com/core-4",
+            "summary": "LLM serving and inference stack",
+            "raw_popularity_signal": {"rank": 4},
+            "source_type": "github_trending",
+        },
+        {
+            "title": "browser agent workflow repo",
+            "url": "https://example.com/core-5",
+            "summary": "Agent workflow and orchestration",
+            "raw_popularity_signal": {"rank": 5},
+            "source_type": "github_trending",
+        },
+        {
+            "title": "xbtlin / ai-berkshire",
+            "url": "https://example.com/adjacent-1",
+            "summary": "Claude Code based investing agent workflow",
+            "raw_popularity_signal": {"rank": 6},
+            "source_type": "github_trending",
+        },
+    ]
+
+    sections = build_digest_sections(items)
+
+    assert sections[0].title == "AI 엔지니어링 핵심 5"
+    assert len(sections[0].entries) == 5
+    assert sections[1].title == "인접/참고 2"
+    assert [entry.title for entry in sections[1].entries] == ["xbtlin / ai-berkshire"]
+
+
+def test_build_digest_sections_backfills_when_core_pool_is_small():
     items = [
         {
             "title": "google-labs-code / design.md",
@@ -65,10 +119,11 @@ def test_build_digest_sections_splits_core_and_adjacent_items():
 
     sections = build_digest_sections(items)
 
-    assert sections[0].title == "AI 엔지니어링 핵심 5"
-    assert [entry.title for entry in sections[0].entries] == ["google-labs-code / design.md"]
-    assert sections[1].title == "인접/참고 2"
-    assert [entry.title for entry in sections[1].entries] == ["xbtlin / ai-berkshire"]
+    assert [entry.title for entry in sections[0].entries] == [
+        "google-labs-code / design.md",
+        "xbtlin / ai-berkshire",
+        "simplex-chat / simplex-chat",
+    ]
 
 
 def test_build_digest_sections_limits_paper_heavy_results():
@@ -107,7 +162,7 @@ def test_build_digest_sections_limits_paper_heavy_results():
 
     sections = build_digest_sections(items)
     core_entries = sections[0].entries
-    paper_count = sum(1 for entry in core_entries if "Paper" in entry.title or "hf agent paper" == entry.title)
+    paper_count = sum(1 for entry in core_entries if "Paper" in entry.title or entry.title == "hf agent paper")
 
     assert paper_count <= 2
     assert any(entry.title == "design.md for coding agents" for entry in core_entries)

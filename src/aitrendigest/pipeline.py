@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
@@ -132,28 +132,54 @@ def _rank_scored_items(items: list[TrendItemInput | dict[str, Any]]) -> list[_Sc
     return sorted(scored, key=lambda row: (row.ai_engineering_fit, row.title), reverse=True)
 
 
-def _take_section_items(scored_items: list[_ScoredItem], section: str, limit: int, paper_limit: int) -> list[_ScoredItem]:
-    selected: list[_ScoredItem] = []
-    paper_count = 0
+def _fill_from_candidates(
+    selected: list[_ScoredItem],
+    scored_items: list[_ScoredItem],
+    *,
+    limit: int,
+    allowed_sections: set[str],
+    paper_limit: int,
+) -> list[_ScoredItem]:
+    used_urls = {item.url for item in selected}
+    paper_count = sum(1 for item in selected if item.source_type in PAPER_SOURCES)
 
-    for item in scored_items:
-        if item.section != section:
-            continue
-        if item.source_type in PAPER_SOURCES and paper_count >= paper_limit:
-            continue
-        selected.append(item)
-        if item.source_type in PAPER_SOURCES:
-            paper_count += 1
-        if len(selected) == limit:
-            break
-
+    for allow_papers in (False, True):
+        for item in scored_items:
+            if len(selected) >= limit:
+                return selected
+            if item.url in used_urls:
+                continue
+            if item.section not in allowed_sections:
+                continue
+            is_paper = item.source_type in PAPER_SOURCES
+            if is_paper != allow_papers:
+                continue
+            if is_paper and paper_count >= paper_limit:
+                continue
+            selected.append(item)
+            used_urls.add(item.url)
+            if is_paper:
+                paper_count += 1
     return selected
 
 
 def build_digest_sections(items: list[TrendItemInput | dict[str, Any]]) -> list[DigestSection]:
     scored_items = _rank_scored_items(items)
-    core_items = _take_section_items(scored_items, section="core", limit=5, paper_limit=CORE_PAPER_LIMIT)
-    adjacent_items = _take_section_items(scored_items, section="adjacent", limit=2, paper_limit=ADJACENT_PAPER_LIMIT)
+
+    core_items = _fill_from_candidates(
+        selected=[],
+        scored_items=scored_items,
+        limit=5,
+        allowed_sections={"core", "adjacent", "exclude"},
+        paper_limit=CORE_PAPER_LIMIT,
+    )
+    adjacent_items = _fill_from_candidates(
+        selected=[],
+        scored_items=[item for item in scored_items if item.url not in {entry.url for entry in core_items}],
+        limit=2,
+        allowed_sections={"adjacent", "core", "exclude"},
+        paper_limit=ADJACENT_PAPER_LIMIT,
+    )
 
     sections: list[DigestSection] = []
     if core_items:
