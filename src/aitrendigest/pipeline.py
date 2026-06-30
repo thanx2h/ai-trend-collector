@@ -30,6 +30,9 @@ DEFAULT_SOURCE_URLS: dict[str, str] = {
 
 CORE_SECTION_TITLE = "AI 엔지니어링 핵심 5"
 ADJACENT_SECTION_TITLE = "인접/참고 2"
+PAPER_SOURCES = {"arxiv", "hf_papers"}
+CORE_PAPER_LIMIT = 2
+ADJACENT_PAPER_LIMIT = 1
 
 
 class SourceFetchError(RuntimeError):
@@ -87,6 +90,7 @@ class _ScoredItem:
     ai_engineering_fit: int
     url: str
     section: str
+    source_type: str
 
 
 def _item_to_dict(item: TrendItemInput | dict[str, Any]) -> dict[str, Any]:
@@ -119,6 +123,7 @@ def _score_item(item: TrendItemInput | dict[str, Any]) -> _ScoredItem:
         ai_engineering_fit=assessment.score,
         url=item_dict["url"],
         section=assessment.section,
+        source_type=item_dict["source_type"],
     )
 
 
@@ -127,10 +132,28 @@ def _rank_scored_items(items: list[TrendItemInput | dict[str, Any]]) -> list[_Sc
     return sorted(scored, key=lambda row: (row.ai_engineering_fit, row.title), reverse=True)
 
 
+def _take_section_items(scored_items: list[_ScoredItem], section: str, limit: int, paper_limit: int) -> list[_ScoredItem]:
+    selected: list[_ScoredItem] = []
+    paper_count = 0
+
+    for item in scored_items:
+        if item.section != section:
+            continue
+        if item.source_type in PAPER_SOURCES and paper_count >= paper_limit:
+            continue
+        selected.append(item)
+        if item.source_type in PAPER_SOURCES:
+            paper_count += 1
+        if len(selected) == limit:
+            break
+
+    return selected
+
+
 def build_digest_sections(items: list[TrendItemInput | dict[str, Any]]) -> list[DigestSection]:
     scored_items = _rank_scored_items(items)
-    core_items = [item for item in scored_items if item.section == "core"][:5]
-    adjacent_items = [item for item in scored_items if item.section == "adjacent"][:2]
+    core_items = _take_section_items(scored_items, section="core", limit=5, paper_limit=CORE_PAPER_LIMIT)
+    adjacent_items = _take_section_items(scored_items, section="adjacent", limit=2, paper_limit=ADJACENT_PAPER_LIMIT)
 
     sections: list[DigestSection] = []
     if core_items:

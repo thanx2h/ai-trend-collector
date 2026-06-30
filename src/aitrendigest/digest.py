@@ -23,7 +23,6 @@ def render_digest_message(date_label: str, sections: list[DigestSection], experi
             lines.extend(
                 [
                     f"{index}. {entry.title}",
-                    f"AI 엔지니어링 적합도 {entry.ai_engineering_fit}점",
                     f"Link: {entry.url}",
                     "",
                 ]

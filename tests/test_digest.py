@@ -1,7 +1,7 @@
 ﻿from aitrendigest.digest import DigestEntry, DigestSection, render_digest_message
 
 
-def test_render_digest_message_formats_sections_and_scores():
+def test_render_digest_message_formats_sections_without_scores():
     sections = [
         DigestSection(
             title="AI 엔지니어링 핵심 5",
@@ -20,6 +20,6 @@ def test_render_digest_message_formats_sections_and_scores():
 
     assert "[AI Trend Digest | 2026-06-26]" in message
     assert "AI 엔지니어링 핵심 5" in message
-    assert "AI 엔지니어링 적합도 91점" in message
+    assert "AI 엔지니어링 적합도" not in message
     assert "Link: https://example.com/post" in message
     assert "Try This Today" in message

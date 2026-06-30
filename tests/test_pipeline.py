@@ -1,4 +1,4 @@
-from aitrendigest.pipeline import build_daily_digest, build_digest_sections, publish_new_items
+﻿from aitrendigest.pipeline import build_daily_digest, build_digest_sections, publish_new_items
 
 
 class DummyResponse:
@@ -71,6 +71,49 @@ def test_build_digest_sections_splits_core_and_adjacent_items():
     assert [entry.title for entry in sections[1].entries] == ["xbtlin / ai-berkshire"]
 
 
+def test_build_digest_sections_limits_paper_heavy_results():
+    items = [
+        {
+            "title": f"Paper {index} benchmark for agents",
+            "url": f"https://example.com/paper-{index}",
+            "summary": "RAG benchmark evaluation for agent workflows",
+            "raw_popularity_signal": {},
+            "source_type": "arxiv",
+        }
+        for index in range(4)
+    ] + [
+        {
+            "title": "design.md for coding agents",
+            "url": "https://example.com/design",
+            "summary": "AI coding agent design guide",
+            "raw_popularity_signal": {"rank": 1},
+            "source_type": "github_trending",
+        },
+        {
+            "title": "browser agent workflow repo",
+            "url": "https://example.com/browser-agent",
+            "summary": "Tool calling workflow and eval harness",
+            "raw_popularity_signal": {"rank": 2},
+            "source_type": "github_trending",
+        },
+        {
+            "title": "hf agent paper",
+            "url": "https://example.com/hf-paper",
+            "summary": "Agent evaluation paper",
+            "raw_popularity_signal": {},
+            "source_type": "hf_papers",
+        },
+    ]
+
+    sections = build_digest_sections(items)
+    core_entries = sections[0].entries
+    paper_count = sum(1 for entry in core_entries if "Paper" in entry.title or "hf agent paper" == entry.title)
+
+    assert paper_count <= 2
+    assert any(entry.title == "design.md for coding agents" for entry in core_entries)
+    assert any(entry.title == "browser agent workflow repo" for entry in core_entries)
+
+
 def test_build_daily_digest_returns_ranked_entries():
     items = [
         {
@@ -94,7 +137,7 @@ def test_build_daily_digest_returns_ranked_entries():
     assert entries[0].title == "Agent evaluation harness"
 
 
-def test_publish_new_items_renders_live_digest_without_db(monkeypatch):
+def test_publish_new_items_renders_live_digest_without_db():
     settings = Settings(telegram_bot_token="token", telegram_chat_id="12345")
     publisher = DummyPublisher()
     items = [
@@ -110,4 +153,5 @@ def test_publish_new_items_renders_live_digest_without_db(monkeypatch):
     message = publish_new_items(settings, publisher=publisher, dry_run=False, items=items)
 
     assert "AI 엔지니어링 핵심 5" in message
+    assert "AI 엔지니어링 적합도" not in message
     assert len(publisher.messages) == 1
