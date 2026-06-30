@@ -11,6 +11,7 @@ def test_render_digest_message_formats_sections_without_scores():
                     tags=["agent", "eval"],
                     ai_engineering_fit=91,
                     url="https://example.com/post",
+                    summary="에이전트 워크플로를 바로 참고할 수 있는 항목",
                 )
             ],
         )
@@ -20,6 +21,7 @@ def test_render_digest_message_formats_sections_without_scores():
 
     assert "[AI Trend Digest | 2026-06-26]" in message
     assert "AI 엔지니어링 핵심 5" in message
+    assert "에이전트 워크플로를 바로 참고할 수 있는 항목" in message
     assert "AI 엔지니어링 적합도" not in message
     assert "Link: https://example.com/post" in message
     assert "Try This Today" in message

@@ -2,10 +2,12 @@
 
 from dataclasses import dataclass
 from datetime import date
+from html import unescape
 from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 import logging
+import re
 import ssl
 
 from aitrendigest.collectors.arxiv import parse_arxiv_feed
@@ -33,6 +35,23 @@ ADJACENT_SECTION_TITLE = "인접/참고 2"
 PAPER_SOURCES = {"arxiv", "hf_papers"}
 CORE_PAPER_LIMIT = 2
 ADJACENT_PAPER_LIMIT = 1
+SUMMARY_BY_TAG = {
+    "agent": "에이전트 워크플로를 바로 참고할 수 있는 항목",
+    "eval": "평가와 벤치마크 관점에서 참고할 만한 항목",
+    "rag": "RAG 설계와 검색 품질 개선에 도움 되는 항목",
+    "serving": "추론 서빙과 배포 흐름을 살필 수 있는 항목",
+    "multimodal": "비전·음성 등 멀티모달 활용 흐름을 볼 수 있는 항목",
+    "tooling": "실무에 바로 붙여볼 수 있는 도구나 레포",
+    "infra": "AI 개발 인프라 흐름을 가볍게 참고할 수 있는 항목",
+    "skill": "프롬프트와 모델 튜닝 감각을 볼 수 있는 항목",
+}
+SOURCE_DEFAULT_SUMMARY = {
+    "github_trending": "실제로 구현 방식을 확인할 수 있는 GitHub 레포",
+    "hf_models": "바로 테스트해볼 수 있는 Hugging Face 모델 페이지",
+    "hf_papers": "최근 아이디어 흐름을 볼 수 있는 논문 요약 페이지",
+    "arxiv": "핵심 아이디어를 빠르게 훑어볼 수 있는 arXiv 논문",
+}
+SUMMARY_MAX_LENGTH = 62
 
 
 class SourceFetchError(RuntimeError):
@@ -91,6 +110,7 @@ class _ScoredItem:
     url: str
     section: str
     source_type: str
+    summary: str
 
 
 def _item_to_dict(item: TrendItemInput | dict[str, Any]) -> dict[str, Any]:
@@ -103,6 +123,36 @@ def _item_to_dict(item: TrendItemInput | dict[str, Any]) -> dict[str, Any]:
         "raw_popularity_signal": item.raw_popularity_signal or {},
         "source_type": item.source_type,
     }
+
+
+def _clean_summary_text(summary: str | None) -> str:
+    if not summary:
+        return ""
+    text = re.sub(r"<[^>]+>", " ", summary)
+    text = unescape(text)
+    text = " ".join(text.split())
+    return text
+
+
+def _shorten_summary(text: str) -> str:
+    if len(text) <= SUMMARY_MAX_LENGTH:
+        return text
+    trimmed = text[: SUMMARY_MAX_LENGTH - 1].rstrip(" ,.;:")
+    return f"{trimmed}…"
+
+
+def _build_entry_summary(item_dict: dict[str, Any], tags: list[str]) -> str:
+    cleaned_summary = _clean_summary_text(item_dict.get("summary"))
+    if cleaned_summary:
+        return _shorten_summary(cleaned_summary)
+    for tag in tags:
+        summary = SUMMARY_BY_TAG.get(tag)
+        if summary:
+            return summary
+    return SOURCE_DEFAULT_SUMMARY.get(
+        item_dict["source_type"],
+        "왜 볼 만한지 빠르게 판단할 수 있는 참고 링크",
+    )
 
 
 def _score_item(item: TrendItemInput | dict[str, Any]) -> _ScoredItem:
@@ -124,6 +174,7 @@ def _score_item(item: TrendItemInput | dict[str, Any]) -> _ScoredItem:
         url=item_dict["url"],
         section=assessment.section,
         source_type=item_dict["source_type"],
+        summary=_build_entry_summary(item_dict, tags),
     )
 
 
@@ -192,6 +243,7 @@ def build_digest_sections(items: list[TrendItemInput | dict[str, Any]]) -> list[
                         tags=item.tags,
                         ai_engineering_fit=item.ai_engineering_fit,
                         url=item.url,
+                        summary=item.summary,
                     )
                     for item in core_items
                 ],
@@ -207,6 +259,7 @@ def build_digest_sections(items: list[TrendItemInput | dict[str, Any]]) -> list[
                         tags=item.tags,
                         ai_engineering_fit=item.ai_engineering_fit,
                         url=item.url,
+                        summary=item.summary,
                     )
                     for item in adjacent_items
                 ],

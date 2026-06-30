@@ -7,6 +7,7 @@ class DigestEntry:
     tags: list[str]
     ai_engineering_fit: int
     url: str
+    summary: str
 
 
 @dataclass(slots=True)
@@ -23,6 +24,7 @@ def render_digest_message(date_label: str, sections: list[DigestSection], experi
             lines.extend(
                 [
                     f"{index}. {entry.title}",
+                    entry.summary,
                     f"Link: {entry.url}",
                     "",
                 ]

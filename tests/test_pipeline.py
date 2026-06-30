@@ -28,6 +28,10 @@ from aitrendigest.config import Settings
 from aitrendigest.telegram import TelegramPublisher
 
 
+CORE_TITLE = "AI 엔지니어링 핵심 5"
+ADJACENT_TITLE = "인접/참고 2"
+
+
 def test_telegram_publisher_posts_message():
     client = DummyClient()
     publisher = TelegramPublisher(client, "token", "12345")
@@ -86,9 +90,9 @@ def test_build_digest_sections_preserves_adjacent_section_when_core_is_full():
 
     sections = build_digest_sections(items)
 
-    assert sections[0].title == "AI 엔지니어링 핵심 5"
+    assert sections[0].title == CORE_TITLE
     assert len(sections[0].entries) == 5
-    assert sections[1].title == "인접/참고 2"
+    assert sections[1].title == ADJACENT_TITLE
     assert [entry.title for entry in sections[1].entries] == ["xbtlin / ai-berkshire"]
 
 
@@ -207,6 +211,7 @@ def test_publish_new_items_renders_live_digest_without_db():
 
     message = publish_new_items(settings, publisher=publisher, dry_run=False, items=items)
 
-    assert "AI 엔지니어링 핵심 5" in message
+    assert CORE_TITLE in message
     assert "AI 엔지니어링 적합도" not in message
+    assert "AI coding agent design guide" in message
     assert len(publisher.messages) == 1
