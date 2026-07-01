@@ -108,6 +108,10 @@ class SubscriberRepository:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
 
+    def get_subscriber(self, chat_id: str) -> SubscriberRecord | None:
+        with self._session_factory() as session:
+            return session.get(SubscriberRecord, chat_id)
+
     def register_if_missing(self, chat_id: str, default_period_days: int, anchor_date: date) -> SubscriberRecord:
         now = _utcnow()
         with self._session_factory() as session:
@@ -136,6 +140,64 @@ class SubscriberRepository:
                 if existing is None:
                     raise
                 return existing
+
+    def update_period(self, chat_id: str, period_days: int, anchor_date: date) -> SubscriberRecord:
+        now = _utcnow()
+        with self._session_factory() as session:
+            record = session.get(SubscriberRecord, chat_id)
+            if record is None:
+                record = SubscriberRecord(
+                    chat_id=chat_id,
+                    is_active=True,
+                    period_days=period_days,
+                    anchor_date=anchor_date,
+                    last_sent_on=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(record)
+            else:
+                record.is_active = True
+                record.period_days = period_days
+                record.anchor_date = anchor_date
+                record.updated_at = now
+
+            try:
+                session.commit()
+                session.refresh(record)
+                return record
+            except IntegrityError:
+                session.rollback()
+                existing = session.get(SubscriberRecord, chat_id)
+                if existing is None:
+                    raise
+                existing.is_active = True
+                existing.period_days = period_days
+                existing.anchor_date = anchor_date
+                existing.updated_at = now
+                session.commit()
+                session.refresh(existing)
+                return existing
+
+    def list_active_subscribers(self) -> list[SubscriberRecord]:
+        with self._session_factory() as session:
+            return list(
+                session.execute(
+                    select(SubscriberRecord).where(SubscriberRecord.is_active.is_(True))
+                ).scalars().all()
+            )
+
+    def mark_sent_on(self, chat_id: str, sent_on: date) -> SubscriberRecord:
+        now = _utcnow()
+        with self._session_factory() as session:
+            record = session.get(SubscriberRecord, chat_id)
+            if record is None:
+                raise KeyError(chat_id)
+            record.last_sent_on = sent_on
+            record.updated_at = now
+            session.commit()
+            session.refresh(record)
+            return record
 
     def get_last_update_id(self) -> int | None:
         with self._session_factory() as session:

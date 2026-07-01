@@ -15,7 +15,9 @@ from aitrendigest.collectors.github_trending import parse_github_trending_html
 from aitrendigest.collectors.hf_models import parse_hf_trending_models_html
 from aitrendigest.collectors.hf_papers import parse_hf_trending_papers_html
 from aitrendigest.collectors.rss import parse_rss_feed
+from aitrendigest.db import create_schema, create_session_factory
 from aitrendigest.digest import DigestEntry, DigestSection, render_digest_message
+from aitrendigest.repository import SubscriberRepository
 from aitrendigest.scoring import assess_ai_engineering_fit
 from aitrendigest.tagging import infer_tags
 from aitrendigest.telegram import TelegramPublisher
@@ -186,6 +188,39 @@ def parse_period_command(text: str | None) -> int | None:
     return period_days if period_days > 0 else None
 
 
+def process_telegram_updates(
+    repository: SubscriberRepository,
+    updates: list[dict[str, Any]],
+    *,
+    today: date,
+    default_period_days: int,
+) -> None:
+    for update in updates:
+        update_id = update.get("update_id")
+        if not isinstance(update_id, int):
+            continue
+
+        message = update.get("message") or {}
+        chat = message.get("chat") or {}
+        chat_id = chat.get("id")
+        if chat_id is None:
+            repository.set_last_update_id(update_id)
+            continue
+
+        chat_id_str = str(chat_id)
+        repository.register_if_missing(
+            chat_id_str,
+            default_period_days=default_period_days,
+            anchor_date=today,
+        )
+
+        period_days = parse_period_command(message.get("text"))
+        if period_days is not None:
+            repository.update_period(chat_id_str, period_days=period_days, anchor_date=today)
+
+        repository.set_last_update_id(update_id)
+
+
 def _score_item(item: TrendItemInput | dict[str, Any]) -> _ScoredItem:
     item_dict = _item_to_dict(item)
     text = f"{item_dict['title']} {item_dict.get('summary') or ''}"
@@ -329,5 +364,62 @@ def publish_new_items(settings, publisher: TelegramPublisher | None = None, dry_
 
     publisher.send_message(message)
     return message
+
+
+def run_scheduled_delivery(
+    *,
+    repository: SubscriberRepository,
+    publisher: TelegramPublisher,
+    items: list[TrendItemInput | dict[str, Any]],
+    today: date,
+) -> str:
+    subscribers = repository.list_active_subscribers()
+    if not subscribers:
+        return "No subscribers to notify."
+
+    message = build_digest_message(items, date_label=today.isoformat())
+    sent_count = 0
+    for subscriber in subscribers:
+        if not is_subscriber_due_today(
+            anchor_date=subscriber.anchor_date,
+            period_days=subscriber.period_days,
+            today=today,
+            last_sent_on=subscriber.last_sent_on,
+        ):
+            continue
+        publisher.send_message(message, chat_id=subscriber.chat_id)
+        repository.mark_sent_on(subscriber.chat_id, today)
+        sent_count += 1
+    return f"Sent digest to {sent_count} subscribers."
+
+
+def run_once_for_scheduler(
+    *,
+    database_url: str,
+    telegram_client: TelegramPublisher,
+    publisher: TelegramPublisher,
+    today: date,
+    source_items: list[TrendItemInput | dict[str, Any]],
+    default_period_days: int,
+) -> str:
+    session_factory = create_session_factory(database_url)
+    create_schema(session_factory)
+    repository = SubscriberRepository(session_factory)
+
+    last_update_id = repository.get_last_update_id()
+    offset = last_update_id + 1 if last_update_id is not None else None
+    updates = telegram_client.get_updates(offset=offset)
+    process_telegram_updates(
+        repository,
+        updates,
+        today=today,
+        default_period_days=default_period_days,
+    )
+    return run_scheduled_delivery(
+        repository=repository,
+        publisher=publisher,
+        items=source_items,
+        today=today,
+    )
 
 

@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str = Field(min_length=1)
     telegram_chat_id: str = Field(min_length=1)
+    database_url: str = Field(default="sqlite:///ai_trend_digest.db")
     enabled_sources_raw: str = Field(
         default="github_trending,hf_models,hf_papers,arxiv",
         validation_alias="AIDIGEST_ENABLED_SOURCES",

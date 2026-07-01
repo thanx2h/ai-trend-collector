@@ -42,9 +42,10 @@ class TelegramPublisher:
             raise RuntimeError("telegram getUpdates returned no result list")
         return result
 
-    def send_message(self, message: str) -> None:
+    def send_message(self, message: str, chat_id: str | None = None) -> None:
         url = f"https://api.telegram.org/bot{self._bot_token}/sendMessage"
-        payload = {"chat_id": self._chat_id, "text": message}
+        target_chat_id = chat_id or self._chat_id
+        payload = {"chat_id": target_chat_id, "text": message}
         last_error: Exception | None = None
         for _ in range(2):
             try:

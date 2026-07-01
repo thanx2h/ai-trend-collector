@@ -5,7 +5,10 @@ from aitrendigest.pipeline import (
     build_digest_sections,
     is_subscriber_due_today,
     parse_period_command,
+    process_telegram_updates,
     publish_new_items,
+    run_once_for_scheduler,
+    run_scheduled_delivery,
 )
 
 
@@ -28,8 +31,8 @@ class DummyPublisher:
     def __init__(self):
         self.messages = []
 
-    def send_message(self, message: str) -> None:
-        self.messages.append(message)
+    def send_message(self, message: str, chat_id: str | None = None) -> None:
+        self.messages.append((chat_id, message))
 
 
 from aitrendigest.config import Settings
@@ -249,3 +252,127 @@ def test_parse_period_command_accepts_positive_integer():
 
 def test_parse_period_command_rejects_invalid_input():
     assert parse_period_command("/period abc") is None
+
+
+def test_process_telegram_updates_auto_registers_unknown_chat():
+    from aitrendigest.db import create_schema, create_session_factory, dispose_engine
+    from aitrendigest.repository import SubscriberRepository
+
+    database_url = "sqlite+pysqlite:///file:process-updates-auto-register?mode=memory&cache=shared&uri=true"
+    try:
+        session_factory = create_session_factory(database_url)
+        create_schema(session_factory)
+        repository = SubscriberRepository(session_factory)
+
+        updates = [{"update_id": 10, "message": {"chat": {"id": 1001}, "text": "hello"}}]
+
+        process_telegram_updates(repository, updates, today=date(2026, 7, 1), default_period_days=1)
+
+        subscriber = repository.get_subscriber("1001")
+        assert subscriber is not None
+        assert subscriber.period_days == 1
+        assert subscriber.anchor_date == date(2026, 7, 1)
+        assert repository.get_last_update_id() == 10
+    finally:
+        dispose_engine(database_url)
+
+
+def test_process_telegram_updates_applies_period_only_to_sender():
+    from aitrendigest.db import create_schema, create_session_factory, dispose_engine
+    from aitrendigest.repository import SubscriberRepository
+
+    database_url = "sqlite+pysqlite:///file:process-updates-period?mode=memory&cache=shared&uri=true"
+    try:
+        session_factory = create_session_factory(database_url)
+        create_schema(session_factory)
+        repository = SubscriberRepository(session_factory)
+
+        repository.register_if_missing("1001", default_period_days=1, anchor_date=date(2026, 7, 1))
+        repository.register_if_missing("1002", default_period_days=1, anchor_date=date(2026, 7, 1))
+
+        updates = [{"update_id": 11, "message": {"chat": {"id": 1001}, "text": "/period 3"}}]
+
+        process_telegram_updates(repository, updates, today=date(2026, 7, 2), default_period_days=1)
+
+        assert repository.get_subscriber("1001").period_days == 3
+        assert repository.get_subscriber("1001").anchor_date == date(2026, 7, 2)
+        assert repository.get_subscriber("1002").period_days == 1
+        assert repository.get_last_update_id() == 11
+    finally:
+        dispose_engine(database_url)
+
+
+def test_run_scheduled_delivery_sends_only_to_due_subscribers():
+    from aitrendigest.db import create_schema, create_session_factory, dispose_engine
+    from aitrendigest.repository import SubscriberRepository
+
+    database_url = "sqlite+pysqlite:///file:scheduled-delivery?mode=memory&cache=shared&uri=true"
+    try:
+        session_factory = create_session_factory(database_url)
+        create_schema(session_factory)
+        repository = SubscriberRepository(session_factory)
+        publisher = DummyPublisher()
+
+        repository.register_if_missing("1001", default_period_days=1, anchor_date=date(2026, 7, 1))
+        repository.register_if_missing("1002", default_period_days=3, anchor_date=date(2026, 7, 2))
+
+        items = [
+            {
+                "title": "agent eval harness",
+                "url": "https://example.com/repo-1",
+                "summary": "Tool calling evaluation repository",
+                "raw_popularity_signal": {"rank": 1},
+                "source_type": "github_trending",
+            }
+        ]
+
+        message = run_scheduled_delivery(
+            repository=repository,
+            publisher=publisher,
+            items=items,
+            today=date(2026, 7, 3),
+        )
+
+        assert [chat_id for chat_id, _ in publisher.messages] == ["1001"]
+        assert repository.get_subscriber("1001").last_sent_on == date(2026, 7, 3)
+        assert repository.get_subscriber("1002").last_sent_on is None
+        assert "1 subscribers" in message
+    finally:
+        dispose_engine(database_url)
+
+
+def test_run_once_for_scheduler_processes_updates_then_sends():
+    from aitrendigest.db import create_schema, create_session_factory, dispose_engine
+
+    class DummyTelegramClient:
+        def __init__(self):
+            self.calls = []
+
+        def get_updates(self, offset=None):
+            self.calls.append(offset)
+            return [
+                {"update_id": 50, "message": {"chat": {"id": 2001}, "text": "hello"}},
+                {"update_id": 51, "message": {"chat": {"id": 2001}, "text": "/period 7"}},
+            ]
+
+    database_url = "sqlite+pysqlite:///file:run-once-scheduler?mode=memory&cache=shared&uri=true"
+    try:
+        session_factory = create_session_factory(database_url)
+        create_schema(session_factory)
+        telegram_client = DummyTelegramClient()
+        publisher = DummyPublisher()
+
+        result = run_once_for_scheduler(
+            database_url=database_url,
+            telegram_client=telegram_client,
+            publisher=publisher,
+            today=date(2026, 7, 1),
+            source_items=[],
+            default_period_days=1,
+        )
+
+        assert "Sent digest to 1 subscribers." == result
+        assert telegram_client.calls == [None]
+        assert publisher.messages
+    finally:
+        dispose_engine(database_url)
