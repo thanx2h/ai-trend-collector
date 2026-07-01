@@ -132,3 +132,6 @@ __marimo__/
 *.db-journal
 .tmp/
 _tmp_config_test_env/
+
+# Local git worktrees
+.worktrees/
