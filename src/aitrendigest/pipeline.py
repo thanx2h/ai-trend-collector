@@ -155,6 +155,24 @@ def _build_entry_summary(item_dict: dict[str, Any], tags: list[str]) -> str:
     )
 
 
+def is_subscriber_due_today(
+    *,
+    anchor_date: date,
+    period_days: int,
+    today: date,
+    last_sent_on: date | None,
+) -> bool:
+    if period_days <= 0:
+        return False
+    if last_sent_on == today:
+        return False
+
+    days_since_anchor = (today - anchor_date).days
+    if days_since_anchor < 0:
+        return False
+    return days_since_anchor % period_days == 0
+
+
 def _score_item(item: TrendItemInput | dict[str, Any]) -> _ScoredItem:
     item_dict = _item_to_dict(item)
     text = f"{item_dict['title']} {item_dict.get('summary') or ''}"
@@ -298,3 +316,5 @@ def publish_new_items(settings, publisher: TelegramPublisher | None = None, dry_
 
     publisher.send_message(message)
     return message
+
+

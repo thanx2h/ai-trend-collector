@@ -1,4 +1,11 @@
-﻿from aitrendigest.pipeline import build_daily_digest, build_digest_sections, publish_new_items
+﻿from datetime import date
+
+from aitrendigest.pipeline import (
+    build_daily_digest,
+    build_digest_sections,
+    is_subscriber_due_today,
+    publish_new_items,
+)
 
 
 class DummyResponse:
@@ -215,3 +222,22 @@ def test_publish_new_items_renders_live_digest_without_db():
     assert "AI 엔지니어링 적합도" not in message
     assert "AI coding agent design guide" in message
     assert len(publisher.messages) == 1
+
+
+
+def test_is_subscriber_due_today_for_every_third_day():
+    assert is_subscriber_due_today(
+        anchor_date=date(2026, 7, 1),
+        period_days=3,
+        today=date(2026, 7, 4),
+        last_sent_on=None,
+    ) is True
+
+
+def test_is_subscriber_due_today_blocks_duplicate_same_day_send():
+    assert is_subscriber_due_today(
+        anchor_date=date(2026, 7, 1),
+        period_days=1,
+        today=date(2026, 7, 1),
+        last_sent_on=date(2026, 7, 1),
+    ) is False
