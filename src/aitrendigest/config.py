@@ -1,4 +1,6 @@
-from pydantic import Field
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +20,17 @@ class Settings(BaseSettings):
         validation_alias="AIDIGEST_ENABLED_SOURCES",
     )
     digest_send_time: str = "09:00"
+    default_period_days: int = Field(default=1, ge=1)
+    timezone_name: str = "Asia/Seoul"
+
+    @field_validator("timezone_name")
+    @classmethod
+    def validate_timezone_name(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"invalid timezone: {value}") from exc
+        return value
 
     @property
     def enabled_sources(self) -> list[str]:
