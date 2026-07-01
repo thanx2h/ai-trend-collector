@@ -10,13 +10,13 @@ from aitrendigest.config import Settings
 def test_settings_load_enabled_sources_from_env(monkeypatch):
     monkeypatch.setenv("AIDIGEST_TELEGRAM_BOT_TOKEN", "token")
     monkeypatch.setenv("AIDIGEST_TELEGRAM_CHAT_ID", "12345")
+    monkeypatch.setenv("AIDIGEST_DATABASE_URL", "sqlite:///ai_trend_digest.db")
     monkeypatch.setenv("AIDIGEST_ENABLED_SOURCES", "github_trending,hf_models,arxiv")
 
     settings = Settings.from_env()
 
     assert settings.telegram_bot_token == "token"
     assert settings.telegram_chat_id == "12345"
-    assert settings.database_url == "sqlite:///ai_trend_digest.db"
     assert settings.database_url == "sqlite:///ai_trend_digest.db"
     assert settings.enabled_sources == ["github_trending", "hf_models", "arxiv"]
 
@@ -56,6 +56,7 @@ def test_settings_load_from_dotenv_file(monkeypatch):
         monkeypatch.chdir(temp_path)
         monkeypatch.delenv("AIDIGEST_TELEGRAM_BOT_TOKEN", raising=False)
         monkeypatch.delenv("AIDIGEST_TELEGRAM_CHAT_ID", raising=False)
+        monkeypatch.setenv("AIDIGEST_DATABASE_URL", "sqlite:///ai_trend_digest.db")
         (temp_path / ".env").write_text(
             "AIDIGEST_TELEGRAM_BOT_TOKEN=token\nAIDIGEST_TELEGRAM_CHAT_ID=12345\n",
             encoding="utf-8",
@@ -74,6 +75,7 @@ def test_settings_load_from_dotenv_file(monkeypatch):
 def test_settings_load_subscriber_schedule_defaults(monkeypatch):
     monkeypatch.setenv("AIDIGEST_TELEGRAM_BOT_TOKEN", "token")
     monkeypatch.setenv("AIDIGEST_TELEGRAM_CHAT_ID", "bootstrap-chat")
+    monkeypatch.setenv("AIDIGEST_DATABASE_URL", "sqlite:///ai_trend_digest.db")
 
     settings = Settings.from_env()
 
@@ -84,6 +86,7 @@ def test_settings_load_subscriber_schedule_defaults(monkeypatch):
 def test_settings_load_subscriber_schedule_overrides_from_env(monkeypatch):
     monkeypatch.setenv("AIDIGEST_TELEGRAM_BOT_TOKEN", "token")
     monkeypatch.setenv("AIDIGEST_TELEGRAM_CHAT_ID", "bootstrap-chat")
+    monkeypatch.setenv("AIDIGEST_DATABASE_URL", "sqlite:///ai_trend_digest.db")
     monkeypatch.setenv("AIDIGEST_DATABASE_URL", "sqlite:///custom.db")
     monkeypatch.setenv("AIDIGEST_DEFAULT_PERIOD_DAYS", "7")
     monkeypatch.setenv("AIDIGEST_TIMEZONE_NAME", "UTC")
@@ -98,6 +101,7 @@ def test_settings_load_subscriber_schedule_overrides_from_env(monkeypatch):
 def test_settings_reject_non_positive_default_period_days(monkeypatch):
     monkeypatch.setenv("AIDIGEST_TELEGRAM_BOT_TOKEN", "token")
     monkeypatch.setenv("AIDIGEST_TELEGRAM_CHAT_ID", "bootstrap-chat")
+    monkeypatch.setenv("AIDIGEST_DATABASE_URL", "sqlite:///ai_trend_digest.db")
     monkeypatch.setenv("AIDIGEST_DEFAULT_PERIOD_DAYS", "0")
 
     with pytest.raises(ValidationError):
@@ -107,6 +111,7 @@ def test_settings_reject_non_positive_default_period_days(monkeypatch):
 def test_settings_reject_invalid_timezone_name(monkeypatch):
     monkeypatch.setenv("AIDIGEST_TELEGRAM_BOT_TOKEN", "token")
     monkeypatch.setenv("AIDIGEST_TELEGRAM_CHAT_ID", "bootstrap-chat")
+    monkeypatch.setenv("AIDIGEST_DATABASE_URL", "sqlite:///ai_trend_digest.db")
     monkeypatch.setenv("AIDIGEST_TIMEZONE_NAME", "Not/A_Real_Timezone")
 
     with pytest.raises(ValidationError):
