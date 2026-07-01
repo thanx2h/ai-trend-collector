@@ -4,6 +4,7 @@ from aitrendigest.pipeline import (
     build_daily_digest,
     build_digest_sections,
     is_subscriber_due_today,
+    parse_now_command,
     parse_period_command,
     process_telegram_updates,
     publish_new_items,
@@ -252,6 +253,52 @@ def test_parse_period_command_accepts_positive_integer():
 
 def test_parse_period_command_rejects_invalid_input():
     assert parse_period_command("/period abc") is None
+
+
+def test_parse_now_command_accepts_exact_command():
+    assert parse_now_command("/now") is True
+    assert parse_now_command("/now please") is False
+
+
+def test_run_once_for_scheduler_sends_now_digest_even_when_not_due():
+    from aitrendigest.db import create_schema, create_session_factory, dispose_engine
+    from aitrendigest.repository import SubscriberRepository
+
+    class DummyTelegramClient:
+        def get_updates(self, offset=None):
+            return [{"update_id": 70, "message": {"chat": {"id": 2001}, "text": "/now"}}]
+
+    database_url = "sqlite+pysqlite:///file:run-once-now?mode=memory&cache=shared&uri=true"
+    try:
+        session_factory = create_session_factory(database_url)
+        create_schema(session_factory)
+        repository = SubscriberRepository(session_factory)
+        repository.register_if_missing("2001", default_period_days=7, anchor_date=date(2026, 6, 25))
+        publisher = DummyPublisher()
+        items = [
+            {
+                "title": "agent eval harness",
+                "url": "https://example.com/repo-1",
+                "summary": "Tool calling evaluation repository",
+                "raw_popularity_signal": {"rank": 1},
+                "source_type": "github_trending",
+            }
+        ]
+
+        result = run_once_for_scheduler(
+            database_url=database_url,
+            telegram_client=DummyTelegramClient(),
+            publisher=publisher,
+            today=date(2026, 7, 1),
+            source_items=items,
+            default_period_days=1,
+        )
+
+        assert result == "Sent digest to 0 subscribers. Sent 1 on-demand digests."
+        assert [chat_id for chat_id, _ in publisher.messages] == ["2001"]
+        assert repository.get_subscriber("2001").last_sent_on == date(2026, 7, 1)
+    finally:
+        dispose_engine(database_url)
 
 
 def test_process_telegram_updates_auto_registers_unknown_chat():

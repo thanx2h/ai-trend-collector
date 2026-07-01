@@ -188,13 +188,18 @@ def parse_period_command(text: str | None) -> int | None:
     return period_days if period_days > 0 else None
 
 
+def parse_now_command(text: str | None) -> bool:
+    return bool(text and text.strip() == "/now")
+
+
 def process_telegram_updates(
     repository: SubscriberRepository,
     updates: list[dict[str, Any]],
     *,
     today: date,
     default_period_days: int,
-) -> None:
+) -> list[str]:
+    now_chat_ids: list[str] = []
     for update in updates:
         update_id = update.get("update_id")
         if not isinstance(update_id, int):
@@ -218,7 +223,12 @@ def process_telegram_updates(
         if period_days is not None:
             repository.update_period(chat_id_str, period_days=period_days, anchor_date=today)
 
+        if parse_now_command(message.get("text")):
+            now_chat_ids.append(chat_id_str)
+
         repository.set_last_update_id(update_id)
+
+    return list(dict.fromkeys(now_chat_ids))
 
 
 def _score_item(item: TrendItemInput | dict[str, Any]) -> _ScoredItem:
@@ -409,17 +419,29 @@ def run_once_for_scheduler(
     last_update_id = repository.get_last_update_id()
     offset = last_update_id + 1 if last_update_id is not None else None
     updates = telegram_client.get_updates(offset=offset)
-    process_telegram_updates(
+    now_chat_ids = process_telegram_updates(
         repository,
         updates,
         today=today,
         default_period_days=default_period_days,
     )
-    return run_scheduled_delivery(
+
+    now_sent_count = 0
+    if now_chat_ids and source_items:
+        message = build_digest_message(source_items, date_label=today.isoformat())
+        for chat_id in now_chat_ids:
+            publisher.send_message(message, chat_id=chat_id)
+            repository.mark_sent_on(chat_id, today)
+            now_sent_count += 1
+
+    scheduled_result = run_scheduled_delivery(
         repository=repository,
         publisher=publisher,
         items=source_items,
         today=today,
     )
+    if now_sent_count == 0:
+        return scheduled_result
+    return f"{scheduled_result} Sent {now_sent_count} on-demand digests."
 
 
