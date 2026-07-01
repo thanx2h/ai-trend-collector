@@ -1,5 +1,4 @@
-from datetime import datetime, timezone
-from time import sleep
+from datetime import date, datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -7,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 
 from aitrendigest.db import create_schema, create_session_factory, dispose_engine
 from aitrendigest.models import TrendItemRecord
-from aitrendigest.repository import ItemRepository
+from aitrendigest.repository import ItemRepository, SubscriberRepository
 from aitrendigest.types import TrendItemInput
 
 
@@ -43,11 +42,16 @@ def test_repository_upserts_item_by_source_identity():
         dispose_engine(database_url)
 
 
-def test_repository_upsert_update_persists_changed_fields():
+def test_repository_upsert_update_persists_changed_fields(monkeypatch):
     database_url = _database_url()
+    times = iter([
+        datetime(2024, 1, 1, tzinfo=timezone.utc),
+        datetime(2024, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
+    ])
+    monkeypatch.setattr("aitrendigest.repository._utcnow", lambda: next(times))
     try:
         session_factory = create_session_factory(database_url)
-        create_schema(session_factory)
+        create_schema(database_url)
         repository = ItemRepository(session_factory)
 
         original = TrendItemInput(
@@ -68,8 +72,6 @@ def test_repository_upsert_update_persists_changed_fields():
                 select(TrendItemRecord).where(TrendItemRecord.id == record_id)
             ).scalar_one()
             created_fetched_at = created.fetched_at
-
-        sleep(0.01)
 
         updated = TrendItemInput(
             source_type='github_trending',
@@ -227,3 +229,169 @@ def test_dispose_engine_replaces_cached_engine_instance():
         assert first_engine is not second_engine
     finally:
         dispose_engine(database_url)
+
+
+def test_subscriber_repository_registers_new_chat():
+    database_url = _database_url()
+    try:
+        session_factory = create_session_factory(database_url)
+        create_schema(session_factory)
+        repository = SubscriberRepository(session_factory)
+
+        subscriber = repository.register_if_missing(
+            '1001',
+            default_period_days=1,
+            anchor_date=date(2026, 7, 1),
+        )
+
+        assert subscriber.chat_id == '1001'
+        assert subscriber.period_days == 1
+        assert subscriber.anchor_date == date(2026, 7, 1)
+        assert subscriber.last_sent_on is None
+    finally:
+        dispose_engine(database_url)
+
+
+def test_subscriber_repository_does_not_overwrite_existing_chat():
+    database_url = _database_url()
+    try:
+        session_factory = create_session_factory(database_url)
+        create_schema(session_factory)
+        repository = SubscriberRepository(session_factory)
+
+        first = repository.register_if_missing(
+            '1001',
+            default_period_days=1,
+            anchor_date=date(2026, 7, 1),
+        )
+        second = repository.register_if_missing(
+            '1001',
+            default_period_days=7,
+            anchor_date=date(2026, 7, 2),
+        )
+
+        assert second.chat_id == first.chat_id
+        assert second.period_days == 1
+        assert second.anchor_date == date(2026, 7, 1)
+        assert second.last_sent_on is None
+    finally:
+        dispose_engine(database_url)
+
+
+def test_subscriber_repository_tracks_last_update_id():
+    database_url = _database_url()
+    try:
+        session_factory = create_session_factory(database_url)
+        create_schema(session_factory)
+        repository = SubscriberRepository(session_factory)
+
+        assert repository.get_last_update_id() is None
+
+        repository.set_last_update_id(42)
+
+        assert repository.get_last_update_id() == 42
+    finally:
+        dispose_engine(database_url)
+
+
+
+def test_subscriber_repository_recovers_from_integrity_error_race_on_register():
+    existing = None
+
+    class FakeResult:
+        def __init__(self, value):
+            self._value = value
+
+        def scalar_one_or_none(self):
+            return self._value
+
+    class FakeSession:
+        def __init__(self):
+            self.lookup_results = [None, existing]
+            self.commit_calls = 0
+            self.rollback_calls = 0
+            self.added_record = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, model, key):
+            return self.lookup_results.pop(0)
+
+        def add(self, record):
+            self.added_record = record
+
+        def commit(self):
+            self.commit_calls += 1
+            if self.commit_calls == 1:
+                raise IntegrityError('insert', {}, Exception('race'))
+
+        def rollback(self):
+            self.rollback_calls += 1
+
+        def refresh(self, record):
+            pass
+
+    created = object()
+
+    fake_session = FakeSession()
+    fake_session.lookup_results = [None, created]
+
+    class FakeSessionFactory:
+        def __call__(self):
+            return fake_session
+
+    repository = SubscriberRepository(FakeSessionFactory())
+    result = repository.register_if_missing('1001', default_period_days=1, anchor_date=date(2026, 7, 1))
+
+    assert result is created
+    assert fake_session.rollback_calls == 1
+
+
+def test_subscriber_repository_recovers_from_integrity_error_race_on_last_update_id():
+    class FakeTelegramStateRecord:
+        def __init__(self, key, value):
+            self.key = key
+            self.value = value
+
+    class FakeSession:
+        def __init__(self):
+            self.lookup_results = [None, FakeTelegramStateRecord('last_update_id', '41')]
+            self.commit_calls = 0
+            self.rollback_calls = 0
+            self.added_record = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, model, key):
+            return self.lookup_results.pop(0)
+
+        def add(self, record):
+            self.added_record = record
+
+        def commit(self):
+            self.commit_calls += 1
+            if self.commit_calls == 1:
+                raise IntegrityError('insert', {}, Exception('race'))
+
+        def rollback(self):
+            self.rollback_calls += 1
+
+    fake_session = FakeSession()
+
+    class FakeSessionFactory:
+        def __call__(self):
+            return fake_session
+
+    repository = SubscriberRepository(FakeSessionFactory())
+    repository.set_last_update_id(42)
+
+    assert fake_session.rollback_calls == 1
+    assert fake_session.lookup_results == []
