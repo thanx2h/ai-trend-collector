@@ -173,6 +173,19 @@ def is_subscriber_due_today(
     return days_since_anchor % period_days == 0
 
 
+_PERIOD_PATTERN = re.compile(r"^/period\s+(\d+)$")
+
+
+def parse_period_command(text: str | None) -> int | None:
+    if not text:
+        return None
+    match = _PERIOD_PATTERN.match(text.strip())
+    if not match:
+        return None
+    period_days = int(match.group(1))
+    return period_days if period_days > 0 else None
+
+
 def _score_item(item: TrendItemInput | dict[str, Any]) -> _ScoredItem:
     item_dict = _item_to_dict(item)
     text = f"{item_dict['title']} {item_dict.get('summary') or ''}"

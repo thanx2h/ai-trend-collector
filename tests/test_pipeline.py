@@ -4,6 +4,7 @@ from aitrendigest.pipeline import (
     build_daily_digest,
     build_digest_sections,
     is_subscriber_due_today,
+    parse_period_command,
     publish_new_items,
 )
 
@@ -224,7 +225,6 @@ def test_publish_new_items_renders_live_digest_without_db():
     assert len(publisher.messages) == 1
 
 
-
 def test_is_subscriber_due_today_for_every_third_day():
     assert is_subscriber_due_today(
         anchor_date=date(2026, 7, 1),
@@ -241,3 +241,11 @@ def test_is_subscriber_due_today_blocks_duplicate_same_day_send():
         today=date(2026, 7, 1),
         last_sent_on=date(2026, 7, 1),
     ) is False
+
+
+def test_parse_period_command_accepts_positive_integer():
+    assert parse_period_command("/period 3") == 3
+
+
+def test_parse_period_command_rejects_invalid_input():
+    assert parse_period_command("/period abc") is None
