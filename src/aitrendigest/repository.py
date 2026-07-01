@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from collections.abc import Iterable
+from datetime import date, datetime, timezone
 
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from aitrendigest.models import TrendItemRecord
+from aitrendigest.models import SubscriberRecord, TelegramStateRecord, TrendItemRecord
 from aitrendigest.types import TrendItemInput
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class ItemRepository:
@@ -32,7 +36,7 @@ class ItemRepository:
         record.published_at = item.published_at
         record.raw_popularity_signal = item.raw_popularity_signal
         record.summary = item.summary
-        record.fetched_at = datetime.now(timezone.utc)
+        record.fetched_at = _utcnow()
 
     def upsert_item(self, item: TrendItemInput) -> int:
         with self._session_factory() as session:
@@ -50,7 +54,7 @@ class ItemRepository:
                 url=item.url,
                 author=item.author,
                 published_at=item.published_at,
-                fetched_at=datetime.now(timezone.utc),
+                fetched_at=_utcnow(),
                 raw_popularity_signal=item.raw_popularity_signal,
                 summary=item.summary,
                 send_status="new",
@@ -97,4 +101,124 @@ class ItemRepository:
                 .where(TrendItemRecord.id.in_(ids))
                 .values(send_status="sent")
             )
+            session.commit()
+
+
+class SubscriberRepository:
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+
+    def get_subscriber(self, chat_id: str) -> SubscriberRecord | None:
+        with self._session_factory() as session:
+            return session.get(SubscriberRecord, chat_id)
+
+    def register_if_missing(self, chat_id: str, default_period_days: int, anchor_date: date) -> SubscriberRecord:
+        now = _utcnow()
+        with self._session_factory() as session:
+            record = session.get(SubscriberRecord, chat_id)
+            if record is not None:
+                return record
+
+            record = SubscriberRecord(
+                chat_id=chat_id,
+                is_active=True,
+                period_days=default_period_days,
+                anchor_date=anchor_date,
+                last_sent_on=None,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(record)
+
+            try:
+                session.commit()
+                session.refresh(record)
+                return record
+            except IntegrityError:
+                session.rollback()
+                existing = session.get(SubscriberRecord, chat_id)
+                if existing is None:
+                    raise
+                return existing
+
+    def update_period(self, chat_id: str, period_days: int, anchor_date: date) -> SubscriberRecord:
+        now = _utcnow()
+        with self._session_factory() as session:
+            record = session.get(SubscriberRecord, chat_id)
+            if record is None:
+                record = SubscriberRecord(
+                    chat_id=chat_id,
+                    is_active=True,
+                    period_days=period_days,
+                    anchor_date=anchor_date,
+                    last_sent_on=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(record)
+            else:
+                record.is_active = True
+                record.period_days = period_days
+                record.anchor_date = anchor_date
+                record.updated_at = now
+
+            try:
+                session.commit()
+                session.refresh(record)
+                return record
+            except IntegrityError:
+                session.rollback()
+                existing = session.get(SubscriberRecord, chat_id)
+                if existing is None:
+                    raise
+                existing.is_active = True
+                existing.period_days = period_days
+                existing.anchor_date = anchor_date
+                existing.updated_at = now
+                session.commit()
+                session.refresh(existing)
+                return existing
+
+    def list_active_subscribers(self) -> list[SubscriberRecord]:
+        with self._session_factory() as session:
+            return list(
+                session.execute(
+                    select(SubscriberRecord).where(SubscriberRecord.is_active.is_(True))
+                ).scalars().all()
+            )
+
+    def mark_sent_on(self, chat_id: str, sent_on: date) -> SubscriberRecord:
+        now = _utcnow()
+        with self._session_factory() as session:
+            record = session.get(SubscriberRecord, chat_id)
+            if record is None:
+                raise KeyError(chat_id)
+            record.last_sent_on = sent_on
+            record.updated_at = now
+            session.commit()
+            session.refresh(record)
+            return record
+
+    def get_last_update_id(self) -> int | None:
+        with self._session_factory() as session:
+            record = session.get(TelegramStateRecord, "last_update_id")
+            if record is None:
+                return None
+            return int(record.value)
+
+    def set_last_update_id(self, update_id: int) -> None:
+        with self._session_factory() as session:
+            record = session.get(TelegramStateRecord, "last_update_id")
+            if record is None:
+                record = TelegramStateRecord(key="last_update_id", value=str(update_id))
+                session.add(record)
+                try:
+                    session.commit()
+                    return
+                except IntegrityError:
+                    session.rollback()
+                    record = session.get(TelegramStateRecord, "last_update_id")
+                    if record is None:
+                        raise
+            record.value = str(update_id)
             session.commit()

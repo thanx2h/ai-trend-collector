@@ -24,9 +24,28 @@ class TelegramPublisher:
         except URLError:
             return False
 
-    def send_message(self, message: str) -> None:
+    def get_updates(self, offset: int | None = None) -> list[dict[str, Any]]:
+        url = f"https://api.telegram.org/bot{self._bot_token}/getUpdates"
+        params: dict[str, Any] = {"timeout": 5}
+        if offset is not None:
+            params["offset"] = offset
+        if self._client is None:
+            raise RuntimeError("telegram update polling requires an HTTP client")
+        response = self._client.get(url, params=params, timeout=10.0)
+        if not response.is_success:
+            raise RuntimeError(f"telegram getUpdates failed: {response.status_code}")
+        payload = response.json()
+        if not payload.get("ok", False):
+            raise RuntimeError("telegram getUpdates returned an error payload")
+        result = payload.get("result")
+        if not isinstance(result, list):
+            raise RuntimeError("telegram getUpdates returned no result list")
+        return result
+
+    def send_message(self, message: str, chat_id: str | None = None) -> None:
         url = f"https://api.telegram.org/bot{self._bot_token}/sendMessage"
-        payload = {"chat_id": self._chat_id, "text": message}
+        target_chat_id = chat_id or self._chat_id
+        payload = {"chat_id": target_chat_id, "text": message}
         last_error: Exception | None = None
         for _ in range(2):
             try:
